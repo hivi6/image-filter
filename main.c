@@ -6,8 +6,8 @@
 #include "stb_image.h"
 
 #define IDENTITY_KERNEL {0, 0, 0, 0, 1.0, 0, 0, 0, 0}
-#define EDGE_KERNEL     {0, -1.0, 0, -1.0, 4.0, -1.0, 0, -1, 0}
-#define SHARPEN_KERNEL  {0, -1.0, 0, -1.0, 5.0, -1.0, 0, -1.0, 0}
+#define EDGE_KERNEL     {0.0, -1.0, 0.0, -1.0, 4.0, -1.0, 0.0, -1.0, 0.0}
+#define SHARPEN_KERNEL  {0.0, -1.0, 0.0, -1.0, 5.0, -1.0, 0.0, -1.0, 0.0}
 #define BOX_KERNEL      {1/9.0, 1/9.0, 1/9.0, 1/9.0, 1/9.0, 1/9.0, 1/9.0, 1/9.0, 1/9.0}
 #define GAUSSIAN_KERNEL {1/16.0, 2/16.0, 1/16.0, 2/16.0, 4/16.0, 2/16.0, 1/16.0, 2/16.0, 1/16.0}
 
@@ -17,7 +17,6 @@ enum filter_type {
   FILTER_SHARPEN      = (1 << 2),
   FILTER_BOX_BLUR     = (1 << 3),
   FILTER_GAUS_BLUR    = (1 << 4),
-  FILTER_UNSHARP_MASK = (1 << 5),
 };
 
 int parse_filters(const char* filters);
@@ -43,13 +42,16 @@ struct kernel_t *kernel_init(const float *data, int size);
 void kernel_free(struct kernel_t *kernel);
 
 struct image_t *apply_kernel(struct image_t *input, struct kernel_t *kernel);
+struct image_t *apply_filter(struct image_t *input, int filter_flag);
 
 int main(int argc, const char* argv[]) {
   struct ap_value *help = ap_value_init(AP_FLAG, "show help", "-h", "--help");
   struct ap_value *verbose = ap_value_init(AP_FLAG, "verbose", "-v", "--verbose");
   struct ap_value *input = ap_value_init(AP_FVALUE, "input file", "-i", "--in");
   struct ap_value *output = ap_value_init(AP_FVALUE, "output file", "-o", "--out");
-  struct ap_value *filter = ap_value_init(AP_FVALUE, "filter", "-f", "--filter");
+  struct ap_value *filter = ap_value_init(
+    AP_FVALUE, "filter: identity,edge,sharpen,box-blur,gaussian-blur", 
+    "-f", "--filter");
 
   struct ap_parser *parser = ap_parser_init("image-filter", "Filter image");
 
@@ -90,10 +92,7 @@ int main(int argc, const char* argv[]) {
     exit(1);
   }
 
-  float kernel_data[9] = BOX_KERNEL;
-  struct kernel_t *kernel = kernel_init(kernel_data, 3);
-
-  struct image_t *output_image = apply_kernel(input_image, kernel);
+  struct image_t *output_image = apply_filter(input_image, filter_flags);
 
   if (image_save(output_image, output->value)) {
     printf("Something went wrong while saving image\n");
@@ -102,8 +101,6 @@ int main(int argc, const char* argv[]) {
   }
 
   image_free(output_image);
-
-  kernel_free(kernel);
 
   image_free(input_image);
 
@@ -125,8 +122,8 @@ int parse_filters(const char* filter) {
 
   int res = 0;
   int start = 0;
-  const char *type[6] = {"identity", "edge", "sharpen", 
-                         "box-blur", "gaussian-blur", "unsharp-masking" };
+  const char *type[5] = {"identity", "edge", "sharpen", 
+                         "box-blur", "gaussian-blur"};
 
   for (int i = 0; filter[i]; i++) {
     if (filter[i] == ',' || filter[i + 1] == 0) {
@@ -136,7 +133,7 @@ int parse_filters(const char* filter) {
       if (filter[i + 1] == 0)
         len++;
       
-      for (int j = 0; j < 6; j++) {
+      for (int j = 0; j < 5; j++) {
         if (strncmp(filter + start, type[j], len) == 0)
           f = (1 << j);
       }
@@ -199,8 +196,6 @@ void image_free(struct image_t *image) {
   stbi_image_free(image->data);
   free(image);
 }
-
-
 
 struct kernel_t *kernel_init(const float *data, int size) {
   if (data == NULL) {
@@ -284,4 +279,48 @@ struct image_t *apply_kernel(struct image_t *input, struct kernel_t *kernel) {
   }
 
   return result;
+}
+
+struct image_t *apply_filter(struct image_t *input, int filter_flag) {
+  struct image_t *res = image_init(input->width, input->height, input->channels);
+  for (int y = 0; y < input->height; y++) {
+    for (int x = 0; x < input->width; x++) {
+      for (int z = 0; z < input->channels; z++) {
+        res->data[(y * input->width + x) * input->channels + z] = 
+          input->data[(y * input->width + x) * input->channels + z];
+      }
+    }
+  }
+
+
+  for (int i = 0; i < 5; i++) {
+    if (filter_flag & (1 << i)) {
+      struct kernel_t *kernel = NULL;
+      if (i == 0) {
+        float kernel_data[9] = IDENTITY_KERNEL;
+        kernel = kernel_init(kernel_data, 3);
+      }
+      else if (i == 1) {
+        float kernel_data[9] = EDGE_KERNEL;
+        kernel = kernel_init(kernel_data, 3);
+      }
+      else if (i == 2) {
+        float kernel_data[9] = SHARPEN_KERNEL;
+        kernel = kernel_init(kernel_data, 3);
+      }
+      else if (i == 3) {
+        float kernel_data[9] = BOX_KERNEL;
+        kernel = kernel_init(kernel_data, 3);
+      }
+      else {
+        float kernel_data[9] = GAUSSIAN_KERNEL;
+        kernel = kernel_init(kernel_data, 3);
+      }
+      struct image_t *intermediate = res;
+      res = apply_kernel(intermediate, kernel);
+      image_free(intermediate);
+      kernel_free(kernel);
+    }
+  }
+  return res;
 }
